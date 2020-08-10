@@ -45,6 +45,8 @@ definitely a question you should sleep upon.
 #### Unit test & TDD
 #### Event Sourcing
 #### Immutability
+#### Event
+#### Stream
 #### Event Store
 
 ### Implementation of a TODO-list
