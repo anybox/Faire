@@ -225,7 +225,8 @@ touch faire/{.,events,tests,entities,utils}/__init__.py
 touch faire/eventstore.py
 touch faire/{events,entities}/todolist.py
 touch faire/events/event.py
-echo rich>requirements.txt
+echo rich>>requirements.txt
+echo pytest>>requirements.txt
 python3 -m pip install -r requirements.txt
 ```
 
@@ -435,7 +436,7 @@ class Applier:
                 f"No applier found for event {event.__class__.__name__}"
             )
 
-        return cls.__appliers.get(event.__type__, not_found_applier)
+        return cls.__appliers.get(event.__class__, not_found_applier)
 
 
 __all__ = ["Applier"]
@@ -453,19 +454,25 @@ from faire.events import TodoListCreated, TaskAddedToList
 
 @Applier.register
 def create_todolist(event:TodoListCreated, todolist=None) ->TodoList:
-    if todolist is not None:
-        raise ValueError("This is an initializer, your entity should not exist at this point")
-    
-    return TodoList(id=event.stream_id,
-                    name=event.name)
+    pass
 
 
 @Applier.register
 def add_task(event: TaskAddedToList, todolist:TodoList) -> TodoList:
-    todolist.tasks.append(
-        Task( id=event.id,
-              name=event.name)
-    )
+    pass
     
-    return todolist
 ```
+
+### Making things work
+
+You know what time it is kids ?
+
+__It's time to write some tests !!__
+
+![](./assets/happykids.jpg)
+
+But first, let's recapitulate where we're at:
+* We have a simple entity class `TodoList`
+
+let's create and edit `faire/tests/appliers_test.py`
+

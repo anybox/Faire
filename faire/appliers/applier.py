@@ -32,7 +32,7 @@ class Applier:
                 f"No applier found for event {event.__class__.__name__}"
             )
 
-        return cls.__appliers.get(event.__type__, not_found_applier)
+        return cls.__appliers.get(event.__class__, not_found_applier)
 
 
 __all__ = ["Applier"]
