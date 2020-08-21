@@ -223,9 +223,7 @@ class CommandHandler:
     ```
     """
     def __init_subclass__(cls, **kwargs):
-        print(kwargs)
-        # genre listen_to=...
-        setattr(cls, "listen_to", kwargs["listen_to"])
+        setattr(cls, "listen_to", kwargs.get("listen_to"))
         
     def handle(self, command:Command):
         raise NotImplementedError()
@@ -274,7 +272,7 @@ those are no the concern of Handlers
 ```python
 from faire.aggregate.user import User
 from faire.command.command import Command, CommandHandler
-from faire.repository.user import UserRepositoryInterface
+from faire.repository import UserRepositoryInterface
 
 
 class RegisterUser(Command):
@@ -297,7 +295,7 @@ class RegisterUserHandler(CommandHandler, listen_to=RegisterUser):
 Commands when arriving to our system, should be given to the proper handler
 
 That's what the dispatcher is for.
-
+`faire/cqrs/command_dispatcher.py`
 ```python
 from collections import defaultdict
 
@@ -361,7 +359,7 @@ import pytest
 from faire.aggregate.user import User
 from faire.command.command import CommandHandler, Command
 from faire.command.user import RegisterUserHandler, RegisterUser
-from faire.command_dispatcher import CommandDispatcher
+from faire.cqrs.command_dispatcher import CommandDispatcher
 from faire.repository import UserRepositoryInterface
 
 
@@ -431,8 +429,341 @@ def test_dispatch():
 ```shell script
 pytest -s faire/tests/command_dispatcher_test.py
 ```
+![./assets/pytest1.png](./assets/pytest1.png) Yay \o/
+
 
 __❗ Tips__ Pytest's `-s` flag allows you to output stuff when running
 tests. Which may come handy for debug.
 
+##### What's next
+
+We have a dispatcher that dispatches. Now we'll want:
+* Endpoint with proper communication practices
+* An actual UserRepository
+* Additionnal bussiness logic to handle
+
+Note that this is only to implement the __Command__ side of things
+as you'll see, __Queries__ are pretty much handled in the exact same
+way. So the plan is to make our first command work, once mastered
+all the concepts involved, implementing queries will be straigthforward.
+
+
+
+The first time I tried to build a CQRS archi, I had a hard time finding
+a clear answer to this question:
+
+# Where the hell do I handle Auth ?
+(Or any system logic for that matter)
+
+Notes: There is no single answer, so the one I'm about to give you
+is not the one universal pattern to do it. There is room for creativity
+
+
+Also, here's an extremely good advice that I wad given years ago (seriously, it's the very best
+advice about software that was ever given to me): 
+> If you're learning any
+kind of software pattern, on personal/toy projects (don't do it in production though)
+as soon as you think you gained even a glimpse of understanding, try and implement it yourself.
+
+> You'll make mistakes, and that's the goal. 
+>
+>The most important thing in software development
+and architecture is not to know how to go things right. 
+>Rather, it's to know how to avoid doing them wrong. 
+>
+>Make mistakes, that's how you learn
+
+#### Endpoint
+```shell script
+echo flask >> requirements.txt&&python3 -m pip install flask
+```
+
+#### Midleware
+```shell script
+mkdir faire/cqrs&&touch faire/cqrs/{__init__,middleware}.py
+echo toolz >> requirements.txt&&python3 -m pip install toolz
+```
+
+Here's what we want
+![assets/CQRS_archi_2.png](./assets/CQRS_archi_2.png) 
+
+
+We'll use the lib [toolz](https://toolz.readthedocs.io/en/latest/api.html#toolz.itertoolz.sliding_window)
+
+`toolz.sliding_window` allows us to do this:
+```python
+from toolz import sliding_window
+
+for a, b in sliding_window(1, [1,2,3,4,5]):
+    print(f"a={a}, b={b}")
+#a=1, b=2
+#a=2, b=3
+#a=3, b=4
+#a=4, b=5
+```
+
+Let's create our mechanism for handling commands with middleware buses instead
+of single handlers:
+
+```python
+from __future__ import annotations
+from typing import List, Union
+
+from toolz import sliding_window
+
+from faire.command.command import CommandHandler
+
+
+class CommandMiddleware:
+    """
+    Base class for Command Middlewares
+    :use:
+    ```python3
+    class LoggingTimeHandler(CommandHandler, CommandMiddleware):
+          def __init__(self, logger:LoggerInterface):
+              self.logger = logger
+
+          def handle(self, command:Command):
+              start_time = time()
+              response = self.next.handle(command)
+              exec_time= time() - start_time
+              self.logger.log(f"exec time: {exec_time}")
+              
+              return response
+    """
+
+    def set_next(self, next_: Union[CommandMiddleware, CommandHandler]):
+        """
+        Sets the handler comming next to create a chain
+        :param next_: 
+        :return: 
+        """
+        self.next = next_
+
+
+class CommandMiddlewareBus:
+    """
+    Bus, that handle proper execution of middlewares to handle a command
+
+    :use:
+    ```python3
+    bus = CommandMiddlewareBus([middleware1, middleware2, finalhandler])
+
+    bus.handle(some_command)
+
+    ```
+    """
+
+    def __init__(
+        self, handlers: List[Union[CommandMiddleware, CommandHandler]]
+    ):
+        for current_middleware, next_middleware in sliding_window(2, handlers):
+            current_middleware.set_next(next_middleware)
+
+        self.handle = handlers[0].handle
+```
+
+
+__TODO__ Expliquer pourquoi ça se comporte comme un handler seul
+
+
+We have a slight change to make to `CommandDispatcher.register_handler`:
+* Rename it to `register_handlers`
+* Change its signature so it now expect a list of handlers
+* Init a `CommandMiddlewareBus` to wrap our handlers
+
+`faire/cqrs/command_dispatcher.py`
+```python
+from collections import defaultdict
+from typing import List
+
+from faire.command.command import CommandHandler, NullHandler, Command
+from faire.cqrs.middleware import CommandMiddlewareBus
+
+
+class CommandDispatcher:
+    def __init__(self):
+        self.handlers = defaultdict(NullHandler)
+
+    def register_handlers(self, handlers: List[CommandHandler]):
+        bus = CommandMiddlewareBus(handlers)
+        self.handlers[bus.listen_to] = bus
+
+    def dispatch(self, command: Command):
+        return self.handlers[command.__class__].handle(command)
+```
+
+The change implied in `faire/tests/command_dispatcher_test.py`
+```python
+
+def get_dispatcher(handler:CommandHandler) -> CommandDispatcher:
+    dispatcher = CommandDispatcher()
+    dispatcher.register_handlers([handler]) #<== This line
+
+    return dispatcher
+```
+
+Running 
+```shell script
+pytest -s faire/tests/command_dispatcher_test.py
+```
+
+should work just fine
+
+
+__TODO__ Expliquer un peu plus le middleware
+
+#### Test the middleware bus
+
+we'll append this code to `faire/tests/command_dispatcher_test.py`:
+```python
+
+class Spy(UserList):
+    """
+    A simple list we'll append message to, in order to assert
+    proper execution order
+    """
+
+
+class SpyMiddleware(CommandHandler, CommandMiddleware):
+    """
+    A middleware that inform the spy before and after the invokation
+    of next middleware in the bus
+    """
+
+    def __init__(self, spy: Spy, name: str):
+        self.name = name
+        self.spy = spy
+
+    def handle(self, command: Command):
+        self.spy.append(f"{self.name} before")
+        response = self.next.handle(command)
+        self.spy.append(f"{self.name} after")
+
+        return response
+
+
+def test_CommandMiddlewareBus():
+    spy = Spy()
+
+    foo_middleware = SpyMiddleware(spy, "foo")
+    bar_middleware = SpyMiddleware(spy, "bar")
+    baz_middleware = SpyMiddleware(spy, "baz")
+
+    # We create a handler and inject it with our dummy repository
+    repository = MookUserRepository()
+    handler = RegisterUserHandler(repository=repository)
+
+    # Then we instanciate our dispatcher
+    dispatcher = CommandDispatcher()
+
+    dispatcher.register_handlers(
+        [foo_middleware, bar_middleware, baz_middleware, handler]
+    )
+
+    first_user_id = dispatcher.dispatch(
+        RegisterUser(username="foo", email="bar")
+    )
+
+    assert spy == [
+        "foo before",
+        "bar before",
+        "baz before",
+        "baz after",
+        "bar after",
+        "foo after",
+    ]
+
+    # Insure it works as in the first test
+    assert isinstance(first_user_id, UUID)
+    assert len(repository.get_all()) == 1
+    assert isinstance(repository.find_by_id(first_user_id), User)
+```
+__Note__: Mocks and test helpers are appended in a dirty way out of
+convenience. We'll refacto that and have our mocks in a separate file at some point.
+
+
+
+#### Add some DTOs
+
+At this point, we've made a dispatcher that execute middleware in the right
+order. If everything goes fine, handling of the command `RegisterUser` should
+return us an id (type `UUID`).
+
+Whatever the architecture you're using, values should be wrapped in dedicated 
+types, and communication between parts of your system should be done thanks to
+dedicated DTO.
+
+Let's do that !
+
+create `faire/cqrs/response.py` and add this code
+```python
+from typing import List, Any
+
+
+class Response:
+    """
+    DTO used to wrap handlers responses
+    """
+
+    def __init__(
+        self, payload: Any, errors: List[str] = [], infos: List[str] = []
+    ):
+        self.payload = payload
+        self.errors = errors
+        self.infos = infos
+
+    def append_error(self, error: str):
+        self.errors.append(error)
+
+    def append_info(self, info: str):
+        self.infos.append(info)
+```
+
+Change accordingly:
+the signature of `CommandHandler.handle` in `faire/command/command.py`
+```python
+    def handle(self, command: Command) -> Response:
+```
+the signature of `CommandDispatcher.dispatch` in `faire/cqrs/command_dispatcher.py`
+```python
+    def dispatch(self, command: Command) -> Response:
+```
+the whole method `RegisterHandler.handle` in `faire/command/user.py`
+```python
+    def handle(self, command: RegisterUser) -> Response:
+        
+        id = self.repository.add(
+            User(username=command.username, email=command.email)
+        )
+        
+        return Response(payload=id)
+```
+
+finally, in `faire/tests/command_dispatcher_test.py`
+
+replace (there is two occurences)
+```python
+    first_user_id = dispatcher.dispatch(
+        RegisterUser(username="foo", email="bar")
+    )
+```
+ by
+ ```python
+    first_user_id = dispatcher.dispatch(
+        RegisterUser(username="foo", email="bar")
+    ).payload
+```
+
+Don't forget the imports, and run
+```shell script
+pytest -s faire/tests/command_dispatcher_test.py
+```
+
+it should work just fine :) 
+
+
+#### Register User
+
+It's now time make things actually do something.
 
