@@ -1,0 +1,53 @@
+version: "3.7"
+
+services:
+  frontend:
+    build:
+      context: ./
+      dockerfile: Dockerfile.javascript
+    volumes:
+      - "./clocky/static/js/:/front"
+
+  clocky:
+    image: ${IMAGE:-local}/clocky:${COMMIT_TAG:-latest}
+    build:
+      context: ./
+      target: dev
+    command: ["flask", "run", "-h", "0.0.0.0", "-p", "5000"]
+    ports:
+      - 5000:5000
+    environment:
+      APP_CONFIG: "clocky.config.DevConfig"
+      FLASK_APP: clocky/app.py
+      FLASK_ENV: "development"
+      POSTGRES_DSN: "${POSTGRES_DSN:-postgresql://clocky:clocky_password@db:5432/clocky?application_name=clocky}"
+      FLASK_DEBUG: 1
+      CLOCKY_TESTDB_URL: "${CLOCKY_TESTDB_URL:-postgresql://clocky:clocky_password@db:5432/clocky?application_name=clocky}"
+      CLOCKY_REPORT_OUTPUT: "./cra/"
+    volumes:
+      - ./cra:/usr/src/clocky/cra/
+      - ./:/usr/src/clocky/
+    networks:
+      - internal
+
+  db:
+    image: "postgres:10"
+    ports:
+      - 5438:5432
+    volumes:
+      - clocky_data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: "${POSTGRES_DB:-clocky}"
+      POSTGRES_USER: "${POSTGRES_USER:-clocky}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-clocky_password}"
+    networks:
+      - internal
+
+volumes:
+  clocky_data:
+    driver: local
+
+networks:
+  internal:
+  traefik_traefik-net:
+    external: false

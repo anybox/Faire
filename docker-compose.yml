@@ -1,0 +1,46 @@
+version: "3.7"
+
+services:
+  clocky:
+    image: ${IMAGE:-local}/clocky:${COMMIT_TAG:-latest}
+    init: true
+    command:
+      [
+        "gunicorn",
+        "--timeout",
+        "60",
+        "-w",
+        "4",
+        "-b",
+        "0.0.0.0:5000",
+        "clocky.app:create_app()",
+      ]
+    environment:
+      POSTGRES_DSN: "${POSTGRES_DSN:-postgresql://db:5432/clocky?application_name=clocky}"
+      SECRET_KEY: "${CLOCKY_SECRET_KEY:-TFGzfuXCzsvQwhZ}"
+      LDAP_PROVIDER_URL: "${LDAP_PROVIDER_URL:-ldaps://ldap.anybox.cloud}"
+      LDAP_BIND_FORMAT: "uid={username},ou=employees,ou=people,dc=anybox,dc=fr"
+      APP_CONFIG: "clocky.config.Config"
+      SERVER_NAME: "${SERVER_NAME:-clocky.local:5000}"
+      SESSION_COOKIE_DOMAIN: "${SESSION_COOKIE_DOMAIN}"
+      WTF_CSRF_ENABLED: "${WTF_CSRF_ENABLED:-true}"
+      ENV: "${ENV:-dev}"
+    deploy:
+      mode: replicated
+      replicas: 2
+      restart_policy:
+        condition: on-failure
+      labels:
+        traefik.port: "5000"
+        traefik.docker.network: "traefik_traefik-net"
+        traefik.frontend.rule: "Host: ${DNS:-clocky.local}"
+      placement:
+        constraints:
+          - node.role == worker
+    networks:
+      - traefik_traefik-net
+
+networks:
+  # traefik network to attach stack
+  traefik_traefik-net:
+    external: true

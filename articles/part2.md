@@ -1,4 +1,4 @@
-# Part 2: CQRS let's stat to build our actual application
+# Part 1: Let's build a CQRS application 
 
 ## Where to start: Use cases
 
@@ -10,6 +10,14 @@ or doing it as code by writing entities using your favorite ORM.
 
 While nothing forbids that in the world of CQRS, __Use Cases__ are
 a much better starting point.
+
+This is not a subject of itself. It's many. DDD, BDD, Cucumber...
+
+__The goal of this part is to give you an understanding of CQRS
+base concepts. What this is definitely not: a thorough guide on
+all the good processes and practices to do that yourself in prod__
+
+(Eventually, that's what that series of articles is meant to be)
 
 So rather than
 
@@ -28,47 +36,157 @@ What your first step will look like should more be along the lines of:
 
 > __As a customer I want to add articles to my basket__
 
-That's where C and Q of CQRS come in:
+(Which could then be declined into several scenarios, on which base you
+may write or generate tests. But hey, we're not aiming for prod ready 
+processes here. Only the basics of CQRS. So (B|D)DD will have to wait
+a later part)
 
-Uses cases will reflect as interactions with the app
+Here come the __C__ and and the __Q__ of __CQRS__.
+
+Uses cases will reflect as interactions with our system
 
 Those interactions will fall in one of two categories:
 
-__Getting stuff__ (Query)
-
-__Doing stuff__ (Command)
+* __Getting stuff__ (Query)
+* __Doing stuff__ (Command)
 
 ## What is this part going to be about
 
-In this part we'll start implementing our application.
-
-We'll do so with the CQRS architecture.
-We won't use Event Sourcing, mixing those two yet would be confusing
-and as you'll see, refactoring CQRS into CQRS+ES will be pretty 
-straigthforward.
+We'll start implementing our application.
+Yet only to the extent useful to introduce __CQRS__ basic
+conceptual blocks.
 
 ## Basic concepts
+### Interface, Dependency injection
+I remember the first time I heard the term __dependency injection__ telling to 
+myself __Just based on how the name sounds, that looks like a super advanced concept__
+
+I also remember the very first time I was introduced to the notion of
+__Interfaces__ wondering why the heck a weird "empty class that can't contain code"
+could help me in anyway.
+
+__This subpart is here to address those question for everyone in those 
+shoes right now. If you already know all this, you can skip through DTO__
+
+#### Foreword on Interfaces in Python
+Many languages have Interfaces. Python doesn't, but Python is nice 
+and let us implement whatever we want, albeit constraints on ourselves.
+
+We'll see in future part how to emulate interfaces with `mypy`. During
+this present part, we'll only assume the constraint.
+
+#### Let's start with a real world situation familiar to most devs
+
+It's your first day in a cool Pythonistas company, You're working on a 
+project with old, legacy code.
+
+You're asked to change the Database from xxxSQL to xxxNOSQL
+
+Exploring the legacy code, you stumble upon that beauty:
+
+```python
+class UserManager:
+    def signin(self, user:User):
+        if db.exec_query(f"SELECT count(*) FROM user WHERE id='{user.email}'")>0:
+            raise UnnecessarilyTypedException(f"A user with email address {user.email} already exists")
+        else:
+            db.exec_query(f"INSERT INTO user(id, email, password) VALUES(NULL, {user.email}, {user.password})")
+    
+```
+
+The  first reaction any decent dev should have here is to puke a little.
+
+The second reaction should be to be to remove that ugly strong coupling.
+
+See, that's a toy example. But should it occur in real life, you could expect
+all the code to be build that way.
+
+#### What's the problem here ?
+
+Well, aside probable SQL injections, what should really shock you here is
+strong coupling. Business logic is written aside technical communication
+with the DB layer. To change the DB while keeping the spirit of this code
+you'd have to go through every handwritten query. You'd have bugs. Nasty 
+and time consuming bugs.
+
+To be extra clear
+> Two users can't have the same email address
+
+Is Business logic (kinda, that's arguable. But that's a toy example so just go with it)
+
+> Asking the DB all users with a given email address
+
+Is technical logic.
+
+Whatever the project, whatever the technical stack, those two should never
+be side by side in a block of code.
+
+Keyword to remember and google __Responsibility segregation__
+                            
+#### What to do about it ?
+Keep coupling as loose as possible. Don't ever mix business logic and low
+level DB stuff (or any low level stuff for that matter)
+
+#### How to achieve that ?
+Here's a change we could make to our legacy code:
+
+```python
+class UserRepositoryInterface:
+    def find_by_email(self, email:str) -> List[User]:
+        raise NotImplementedError()
+
+    def create(self, user:User) -> None:
+        raise NotImplementedError()
+```
+
+First create an Interface. 
+
+__Interfaces__ are contracts. They're saying, "A class that implements me
+should have those methods with those signatures"
+
+Then, make `UserManager` use any class with that interface.
+
+```python
+class UserManager:
+    def __init__(self, repository:UserRepositoryInterface):
+        self.repository = repository
+```
+
+Where lies the business logic (`UserManager` in our case), should
+never, ever be aware of the underlying DB. Only interfaces.
+
+What `UserManager.__init__` is telling us is: __Give me an object that
+has methods `find_by_email(self, email:str) -> List[User]` and
+`create(self, user:User) -> None`. The rest is none of my concern, I
+only care about business logic.
+
+Next step is to move the queries in a class that implements our interface
+```python
+class UserRepositoryXXXSQL(UserRepositoryInterface):
+    def find_user_by_email(self, email:str) -> List[User]:
+        ...
+        # use db.exec_query(f"SELECT count(*) FROM user WHERE id='{email}'")
+        # Init User objects with results and return them as a list
+    ...
+```
+
+When initializing __UserManager__ in our application, we'll __inject__ 
+wanted a dependency, in our case, any given implementation of 
+`UserRepositoryInterface`.
+```python
+user_manager = UserManager(UserRepositoryXXXSQL())
+```
+
+__Dependecy Injection__ is just that.
+
 ### DTO
 A DTO (for Database Transfer Object) is a short lived object meant 
 to contain data and carry it (Initially to a Database, but it's common
 to refer to objects that fits this definition as DTO eventhough no DB is
 involved.
 
-
-### Entities and ValueObject
-
-An entity is an object that as an identity, and represent an instance
-of conceptual entities your application will use.
-
-__Customer__ would be one.
-
-A value object is conceptually close to an entity. The difference is
-that a value object has no life cycle. And its identity is based on the
-value(s) it wraps.
-
-For instance a date, an amount of money, an address...
-All those things should be considered equal by our system on the basis
-of their value and type only.
+__Note: DTO__ Should be immutables. For the sake of only focusing on our
+topic, we'll keep that aspect for a future part.
 
 
 ### Command and Query
@@ -79,23 +197,10 @@ needed to perform the action intended. An action is whenever a mutation occurs
 A query is pretty much the same thing, except its goal is to access data rather
 than inducing a mutation
 
-
-### Aggregate
-
-An __Aggregate__ is an set of Entities and Values Objects that will collaborate
-to represent a business concept.
-That collaboration in insured by an object called __Aggregate Root__
-
-An Aggregate root should be the only way object it contains may be accessed 
-from outside.
-
-
-
 ## Functional concepts
 
-Now we know what Queries and Commands and aggregates aree, we'll tackle concepts
-of the architecture we'll use to implement those concepts.
-
+Now we have a broad idea of what Queries and Commands are, we'll tackle concepts
+of the architecture we'll use to make them work.
 
 ### Handler
 
@@ -105,10 +210,7 @@ but that's for our next part)
 ### Repository
 
 A repository is a class that implements an interface and take care of interactions
-with the persistance layer of your application.
-
-Since Interface are not a thing in Python you may wonder why and how. I'll get to
-that in a bit.
+with the persistence layer of your application.
 
 
 ## Let's get real
@@ -134,23 +236,286 @@ Here are the use cases we'll want to implement in our first iteration:
 
 We'll stick to that for now :)
 
+(__Actual scenarios__, __Cucumber__. Those are two items that would
+make our process real world ready. We'll tackle that in the future.
+Just keep in mind world readiness is not what we're aiming yet) 
+
 
 ### Architecture
+#### Foreword: How to Interface
+For this part, we'll mock the mechanism of Interfaces. We'll rigor
+the crap out of it in future parts.
+
+```python
+class FooInterface:
+    __interface__ = True
+    
+    def method_signature(self, arg1:type1) -> ReturnedType:
+        raise NotImplementedError()
+```
+#### Requirements and project structure
+
+Create a file named `requirements.txt` with this content
+```text
+rich
+pytest
+toolz
+flask
+flask-login
+SQLAlchemy
+Flask-SQLAlchemy
+psycopg2
+werkzeug
+```
+
+Then create the project structure
+```shell script
+python3.8 -m pip install -r requirements.txt
+
+mkdir -p faire/{aggregate,command,query,repository,cqrs,tests,utils}
+touch faire/{aggregate,command,query,repository,cqrs,tests,utils}/__init__.py
+touch faire/{aggregate,command,query,repository}/user.py
+touch faire/aggregate/aggregate.py
+touch faire/command/command.py
+```
+
+__Quick side note: Aggregates__ are, for now, simple entities. We'll see
+in future parts how they're not. What conceptually tell them appart from 
+regular entities. For this part, just assume we could have called them 
+`Entities`
+
+#### Dependency injector
+
+__Dependency Injection__ is something you need to use and understand thoroughly.
+
+Especially in large applications, it's not always totally simple to use.
+
+here are two hurdles that come with it:
+
+##### Verbosity
+If you need to instantiate an object, that depends on an other, that depends on
+an other...
+```python
+my_foo = Foo(BarImplementation(BazImplementation(BlaImplementation())))
+```
+It gets confusing
+
+##### Single instance
+It may happen that you need to use an object on two distinct parts of
+your code. And you want to use the SAME object.
+
+It's not that hard to achieve, but many ways to do so will be painful
+and prone to bug.
+
+There is a pattern for that, it's called __Dependency Injector__ or
+__Dependency Container__
+
+______________
+Create the file `faire/utils/dependency_injector.py` with this code:
+```python
+
+from typing import Any
+
+class DependencyInjector:
+    """
+    Dead Simple dependency injector
+
+    Assumption: Only one type and instance per interface
+    """
+
+    def register_instance(self, instance: Any, *aliases) -> None:
+        pass
+
+    def get(self, cls):
+        pass
+```
+
+Here's what we want it to do:
+> Given FooImpl implementing FooInterface, 
+>
+> Given BlaRegistery has __FooInterface__ as a dependecy (and signal that fact by type hint)
+> 
+> assuming foo is an instance of FooImpl an DI of DependencyInjector
+>
+>
+>       
+> * If DI.register_instance(foo_impl, 'foo_bar', 'bar_foo')
+>   * DI.get(FooInterface) is DI.get(FooImpl) is DI.get('bar_foo') is DI.get('foo_bar') 
+>
+> In the same scope
+> * If DI.get(BlaRegistry) on its first call will return a new instance of 
+> BlaRegistry with the correct dependency injected
+
+
+We have scenarios !
+We can write tests
+
+create `faire/tests/dependency_injector_test.py` with this
+```python
+from faire.utils.dependency_injector import DependencyInjector
+
+
+def test_DependencyInjector():
+    class FooInterface:
+        __interface__ = True
+
+    class FooImpl(FooInterface):
+        pass
+
+    class BlaRegistry:
+        def __init__(self, foo: FooInterface):
+            self.foo = foo
+
+    DI = DependencyInjector()
+    DI.register_instance(FooImpl(), "foo_bar", "bar_foo")
+
+    assert (
+        DI.get(FooInterface)
+        is DI.get(FooImpl)
+        is DI.get("foo_bar")
+        is DI.get("bar_foo")
+        is DI.get(BlaRegistry).foo
+        is not FooImpl()
+    )
+```
+
+A last thing
+
+> DependencyInjector implements the `Singleton` pattern.
+> DepencyInjector.instance returns always the same instance, which is created if needed
+
+Which translate in test as: (append this to the same file)
+
+```python
+def test_DependencyInjectorSingleton():
+    assert DependencyInjector.instance is DependencyInjector.instance
+```
+
+run in terminal
+```python
+python3.8 -m pytest faire/tests/dependency_injector_test.py
+```
+
+Which should fail. If it doesn't fail, that's in itself a fail
+(Wait, would it means it's therefore a success ?)
+
+We'll first take care of the `Singleton` mechanism
+
+create the file `faire/utils/singleton.py` with this
+```python
+from typing import TypeVar
+
+T = TypeVar("T")
+
+
+class Singleton(type):
+    """
+    Dead simple singleton helper
+    :use:
+    ```python
+    class Bla(metaclass=Singleton):
+        def __init__(self): # <= Assumes __init__ awaits no parameter
+            ...
+
+    Bla.instance <= unique instance of Bla
+    """
+
+    @property
+    def instance(cls: T) -> T:
+        # TODO type hint with generic
+        cls._instance = getattr(cls, "_instance", cls())
+
+        return cls._instance
+```
+
+then, replace the content of `faire/utils/dependency_injector.py` with
+```python
+from itertools import cycle
+from typing import Any
+
+from toolz import valmap
+
+from faire.utils.singleton import Singleton
+
+
+class DependencyInjector(metaclass=Singleton):
+    """
+    Dead Simple dependency injector
+
+    Assumption: Only one type and instance per interface
+    """
+
+    def __init__(self):
+        self._instances = {}
+
+    def register_instance(self, instance: Any, *aliases) -> None:
+        """
+        :Note to myself: Perhaps too much magic. TODO: Test limit cases
+        """
+        for base in instance.__class__.__bases__:
+            if getattr(base, "__interface__", False):
+                aliases = [*aliases, base]
+
+        aliases = [*aliases, instance.__class__]
+
+        self._instances.update(dict(zip(aliases, cycle([instance]))))
+
+    def _create_instance(self, cls):
+        # TODO Type hint with Generics
+        self.register_instance(
+            cls(
+                **valmap(
+                    lambda type_: self._instances[type_],
+                    cls.__init__.__annotations__,
+                )
+            )
+        )
+
+    def get(self, cls):
+        if not cls in self._instances:
+            self._create_instance(cls)
+
+        return self._instances[cls]
+```
+
+Again run 
+```python
+python3.8 -m pytest faire/tests/dependency_injector_test.py
+```
+Which should work
+
+##### Important note
+What I'm aiming at, writing this series of articles, is talk to folks in the
+shoes I was when I first started code.
+
+Though, there is an hidden purpose behind this dependency injector. Which
+is to talk to the version of myself of not so long ago and yell as this idiot
+"Dude, that's too much magic".
+
+See, magic in code may be great, but must be handled carefully.
+
+For now this is a mere __not real world ready__ note of caution.
+At this point, and for all intents and purposes of that article,
+`DependencyInjector` behaviour is just fine.
+
+A future part will address how too much magic auto-wiring may happen 
+to be disastrous.
+
+
+
 
 Here's the first bits of code we're going to need
-* [x] Base class for Aggregates
+* [ ] API Endpoint
+* [x] Base class for Users
+* [ ] Base class for Commands
 * [ ] Base class for Commands
 * [ ] Base class for Handlers
 * [x] A User Aggregate
 * [ ] An interface for UserRepository
 * [ ] A Dispatcher 
+* [ ] A Middleware Bus
 
-```shell script
-mkdir faire/{aggregate,command,query,repository}
-touch faire/{aggregate,command,query,repository}/{__init__,user}.py
-touch faire/aggregate/aggregate.py
-touch faire/command/command.py
-```
+
 
 `faire/aggregate/aggregate.py`
 ```python
@@ -547,7 +912,7 @@ class CommandMiddlewareBus:
 
     :use:
     ```python3
-    bus = CommandMiddlewareBus([middleware1, middleware2, finalhandler])
+    bus = MiddlewareBus([middleware1, middleware2, finalhandler])
 
     bus.handle(some_command)
 
@@ -578,7 +943,7 @@ from collections import defaultdict
 from typing import List
 
 from faire.command.command import CommandHandler, NullHandler, Command
-from faire.cqrs.middleware import CommandMiddlewareBus
+from faire.cqrs.middleware import MiddlewareBus
 
 
 class CommandDispatcher:
@@ -767,3 +1132,85 @@ it should work just fine :)
 
 It's now time make things actually do something.
 
+Eventually, we'll use `Flask` and `SQLAlchemy`.
+
+For now, since we have everything we need to make user registration process
+work, we'll do it in the simplest (also dirtiest) way possible.
+
+Also, since while we're still in the toy project territory, we'll stock our
+password in clear text.
+
+Don't ever do that. Just... don't 
+
+first, let's add a `find_by_email` method to `UserRepositoryInterface`
+```python
+...
+class UserRepositoryInterface:
+    def find_by_id(self, id: uuid4) -> User:
+        raise NotImplementedError()
+
+    def find_by_email(self, email: str) -> User:
+        raise NotImplementedError()
+    ...
+    def commit(self, email: str) -> None:
+        raise NotImplementedError()
+    
+    
+    
+    
+...
+```
+
+
+__NOTE__: only material, TODO: write
+
+```python
+
+class UserRepositorySQLA(UserRepositoryInterface):
+    """
+    User repository based on SQLAlchemy
+    """
+    def find_by_id(self, id: uuid4) -> User:
+        pass
+    
+    def find_by_email(self, email: str) -> User:
+        pass
+
+    def get_all(self) -> List[User]:
+        pass
+
+    def add(self, user: User) -> uuid4:
+        pass
+
+    
+```
+
+add werkzeug
+create command/handler
+
+change commandmidleware to middleware
+
+create hashpasswordinterface et sha256Hasher
+
+create hashpassword middleware
+
+create boostrap.py et init du dispatcher
+
+create register_user_test.py
+
+add that to fixtures
+```python
+@pytest.fixture(scope="function")
+def command_dispatcher():
+    from faire.bootstrap import command_dispatcher
+    yield command_dispatcher
+```
+
+add `password:str` to command `RegisterUser`
+
+changement du handler de registeruserhandler
+
+
+creation du dependency injector
+
+ajout de __interface__
